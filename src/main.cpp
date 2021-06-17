@@ -5,13 +5,13 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 
-#define MQ_analog 35 //pino analógico do sensor de gás
+#define MQ_analog 13 
 int gas = 0;
 
 #define PIN_SDA 4
 #define PIN_SCL 15
 
-//Pinout! Customized for TTGO LoRa32 V2.0 Oled Board!
+
 #define SX1278_SCK  5    // GPIO5  -- SX1278's SCK
 #define SX1278_MISO 19   // GPIO19 -- SX1278's MISO
 #define SX1278_MOSI 27   // GPIO27 -- SX1278's MOSI
@@ -29,16 +29,15 @@ const char* password =  "henkes456";
 const char* broker_mqtt = "192.168.1.40";
 int broker_port = 1883;
 WiFiClient espClient;
-PubSubClient MQTT(espClient); 
+PubSubClient MQTT(espClient);
 
 #define LORA_BAND 915E6
-//433E6 for Asia
-//866E6 for Europe
-//915E6 for North America
+//433E6 Asia
+//866E6 Europe
+//915E6 North America
 
 #define PABOOST true
 
-// LoRaWAN Parameters
 #define TXPOWER 14
 #define SPREADING_FACTOR 12
 #define BANDWIDTH 125000
@@ -56,30 +55,32 @@ String MAC;
 
 String otherValues= "";
 
-
-
 // Este node e servidor
 // 0 = Servidor internet
 // 1 = Vizinho de servidor internet
 // 2 = Vizinho com um Vizinho de um servidor internet 
-// 3 = Isolado de todos
 byte isServer = 1;
 String nodeFunction[4] = {"SERVER","VIZINHO","VIZINHODO","ISOLADO"};
 
 byte const maxTableArrayVizinhos = 32; // quantidade de vizinhos pode ser aumentada conform memoria disponivel
-byte myNeighbours[maxTableArrayVizinhos] = {}; // address of vizinhos directos
+byte meusVizinhos[maxTableArrayVizinhos] = {}; // address of vizinhos directos
 
 byte const maxTableArrayServers = 4; // quantidade de servidores ao qual tenho acesso pode ser aumentada
-byte myServers[maxTableArrayServers]     = {}; // address dos servidores que encontrei
+byte meusServidores[maxTableArrayServers]     = {}; // address dos servidores que encontrei
 
-byte localAddress = 101;     // Este sou eu!!!!! 
-byte destination = 0xFF;     // broadcast send
+byte enderecoLocal = 110;     // Este sou eu!!!!! 
+byte destino = 0xFF;     // broadcast send
 
-int interval = 4000;       // intervalo entre envios
-String message = "" ;//Eu sou o "+String(localAddress);    // Envia esta mensagem
+int intervalo = 4000;       // intervaloo entre envios
+String mensagem = "Olá" ;//Eu sou o "+String(enderecoLocal);    // Envia esta mensagem
 
 byte msgCount     = 0;        // numero de mensagens enviadas
 long lastSendTime = 0;        // last send time
+
+const size_t CAPACITY = JSON_OBJECT_SIZE(1)+ JSON_ARRAY_SIZE(2)+20;
+StaticJsonDocument<CAPACITY> doc;
+//JsonArray array = doc.to<JsonArray>();
+String mensagensRecebidas;
 
 
 
@@ -130,25 +131,22 @@ void printScreen() {
   display.display();
   display.setColor(WHITE);
   display.drawString(0, 00, String(LORA_BAND/1000000)+" LoRa " + nodeFunction[isServer]);
-  display.drawString(0, 10,"Me: " + String(localAddress) + " To: " + String(destination) + " N: " + String(msgCount));
-  display.drawString(0, 20, "Tx: " + message);
+  display.drawString(0, 10,"Me: " + String(enderecoLocal) + " To: " + String(destino) + " N: " + String(msgCount));
+  display.drawString(0, 20, "Tx: " + mensagem);
   display.display();
 }
 
-void sendMessage(String outgoing, byte destination) {
+void sendMessage(String mensagem, byte destino) {
   LoRa.beginPacket();
-  LoRa.write(destination);
-  LoRa.write(localAddress);
+  LoRa.write(destino);
+  LoRa.write(enderecoLocal);
   LoRa.write(isServer);
   LoRa.write(msgCount);
-  LoRa.write(outgoing.length());
-  LoRa.print(outgoing);
+  LoRa.write(mensagem.length());
+  LoRa.print(mensagem);
   LoRa.endPacket();
   printScreen();
-  
-  Serial.println("Enviar Mensagem " + String(msgCount) + " para Node: "+ String(destination));
-  Serial.println("Mensagem: " + message); 
-  Serial.println();
+  Serial.println("Enviar Mensagem " + String(msgCount) + " para Node: "+ String(destino));
   delay(1000);
   msgCount++;
 }
@@ -171,25 +169,22 @@ void arrayAddElement(byte array[], byte element, byte max) {
   }
 }
 
-
 void printVizinhos(){
   Serial.print("Vizinhos: {");
-  for (int i = 0; i < sizeof(myNeighbours); i++) { 
-    Serial.print(String(myNeighbours[i]));  Serial.print(" ");
+  for (int i = 0; i < sizeof(meusVizinhos); i++) { 
+    Serial.print(String(meusVizinhos[i]));  Serial.print(" ");
   }  
   Serial.println("}"); 
 
   Serial.print("Servidores: {");
-  for (int i = 0; i < sizeof(myServers); i++) { 
-    Serial.print(String(myServers[i]));     Serial.print(" ");
+  for (int i = 0; i < sizeof(meusServidores); i++) { 
+    Serial.print(String(meusServidores[i]));     Serial.print(" ");
   }
   Serial.println("}"); 
 }
 
 void onReceive(int packetSize) {
-  // Serial.println("error");
   if (packetSize == 0) return;
-
   int recipient = LoRa.read();
   byte sender = LoRa.read();
   byte incomingMsgHand = LoRa.read();
@@ -202,17 +197,11 @@ void onReceive(int packetSize) {
     incoming += (char)LoRa.read();
   }
 
-  if (incomingLength != incoming.length()) {
-    Serial.println("error: message length does not match length");
-    incoming = "message length error";
-    return;
-  }
-
   // Caso a Mensagem não for para mim ou para todos
-  if (recipient != localAddress && recipient != 0xFF) {
-    Serial.println("Esta mensagem não é para mim.");
-    incoming = "message is not for me";
-    message= incoming;
+  if (recipient != enderecoLocal && recipient != 0xFF) {
+    Serial.println("Esta mensagem não é para mim."+ recipient);
+    incoming = "mensagem n e para mim";
+    mensagem= incoming;
     printScreen();
     delay(150);
     return;
@@ -227,9 +216,9 @@ void onReceive(int packetSize) {
   display.drawString(0, 32, "Rx: " + incoming); // Mensagem recebida
 
   //Novo vizinho
-  if(!arrayIncludeElement(myNeighbours,sender,maxTableArrayVizinhos)){
-    arrayAddElement(myNeighbours,sender,maxTableArrayVizinhos);
-    //display.drawString(0, 32, "NOVO: " + String(sender)); 
+  if(!arrayIncludeElement(meusVizinhos,sender,maxTableArrayVizinhos)){
+    arrayAddElement(meusVizinhos,sender,maxTableArrayVizinhos);
+    //display.drawString(0, 32, "NOVO: " + String(sender));
   }
   display.drawString(0, 42, "FR:"  + String(sender)
                           + " TO:" + String(recipient)
@@ -245,9 +234,10 @@ void onReceive(int packetSize) {
   Serial.println("Enviar Para: 0x" + String(recipient, HEX));
   Serial.println("Mensagem ID: " + String(incomingMsgId));
   Serial.println("Mensagem length: " + String(incomingLength));
-  Serial.println("Msg: " + incoming);
+  Serial.println("Conteudo: " + incoming);
   
   otherValues += incoming;
+  mensagensRecebidas += incoming;
   Serial.println("RSSI: " + String(LoRa.packetRssi()));
   Serial.println("Snr: " + String(LoRa.packetSnr()));
   Serial.println();
@@ -256,21 +246,21 @@ void onReceive(int packetSize) {
   // Posicionamento dos nós na rede
   switch (incomingMsgHand) {
     case 0: // Caso Handshake for 0
-      if(!arrayIncludeElement(myServers,sender,maxTableArrayServers)){
+      if(!arrayIncludeElement(meusServidores,sender,maxTableArrayServers)){
         Serial.println("Encontrei um SERVIDOR! "+sender);
-        arrayAddElement(myServers,sender,maxTableArrayServers);
+        arrayAddElement(meusServidores,sender,maxTableArrayServers);
         display.drawString(0, 32, "NOVO: " + String(sender)); 
       }
-      destination = sender;
+      destino = sender;
       break;
     case 1:// Caso Handshake for 1
-      if(!arrayIncludeElement(myNeighbours,sender,maxTableArrayVizinhos)){
+      if(!arrayIncludeElement(meusVizinhos,sender,maxTableArrayVizinhos)){
         Serial.println("Encontrei nó VIZINHO do Server! "+sender);
-        arrayAddElement(myNeighbours,sender,maxTableArrayVizinhos);
+        arrayAddElement(meusVizinhos,sender,maxTableArrayVizinhos);
         display.drawString(0, 32, "NOVO: " + String(sender));
       }
       if(isServer!=0){
-        destination = sender;
+        destino = sender;
       }
       break;
     case 2: // Caso Handshake for 2
@@ -282,37 +272,28 @@ void onReceive(int packetSize) {
 
 }
 
-const size_t CAPACITY = JSON_ARRAY_SIZE(12);
-StaticJsonDocument<CAPACITY> doc;
-JsonArray array = doc.to<JsonArray>();
-String Values;
-
-void makeData(String value){
-  array.add(MAC); //<- Lora MAC
-  array.add(analogRead(MQ_analog));//ler gas
-  array.add(value);
-  // serialize the array and send the result to Serial
-  // serialize the array and send the result to Serial
-  serializeJson(doc, Values);
-  serializeJson(doc, Serial);
-  Serial.println("");
+int gasReader(){
+  return analogRead(MQ_analog);
 }
 
-void init_MQTT(void)
-{
-    //MQTT.setServer(broker_mqtt, broker_port);
-    /* Informa que todo dado que chegar do broker pelo tópico definido em MQTT_SUB_TOPIC
-       Irá fazer a função mqtt_callback ser chamada (e essa, por sua vez, irá escrever
-       os dados recebidos no Serial Monitor */
-    //MQTT.setCallback(mqtt_callback);
+void makeData(long value){
+  if(isServer!=0){
+    doc["node"]=enderecoLocal;
+    doc["sensor"]=gasReader();
+    doc["uptime"]=value;
+    //Serial.println("Executou jsonmaker");
+    serializeJson(doc, mensagensRecebidas);
+  }
+  Serial.println(" ");
+  serializeJson(doc, Serial); // imprimir no Serial
+  Serial.println(" ");
 }
 
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     String msg_broker;
     char c;
     /* Obtem a string do payload (dados) recebido */
-    for(int i = 0; i < length; i++) 
-    {
+    for(int i = 0; i < length; i++) {
        c = (char)payload[i];
        msg_broker += c;
     }
@@ -320,12 +301,28 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     Serial.println(msg_broker);        
 }
 
+void init_MQTT(){
+  MQTT.setServer(broker_mqtt, broker_port);
+  while (!MQTT.connected())
+  {
+    Serial.println("Conectando ao broker MQTT...");
+    if (MQTT.connect("ESP32Client")){
+      Serial.println("Conectado ao broker!");
+    }
+    else{
+      Serial.print("Falha na conexao ao broker - Estado: ");
+      Serial.print(MQTT.state());
+      delay(2000);
+    }
+  }
+}
+
 String sendTable(){
   const size_t CAPACITY = JSON_ARRAY_SIZE(4);
       StaticJsonDocument<CAPACITY> doc;
       JsonArray array = doc.to<JsonArray>();
-        for (int i = 0; i < sizeof(myServers); i++) { 
-            array.add(myServers[i]);
+        for (int i = 0; i < sizeof(meusServidores); i++) { 
+            array.add(meusServidores[i]);
        }
       String Values;
       serializeJson(doc, Values);
@@ -334,8 +331,8 @@ String sendTable(){
 
 void printSensor(){
   Serial.print("MQ135 = ");
-  Serial.print(analogRead(MQ_analog));
-  Serial.println("ppm"); 
+  Serial.print(gasReader());
+  Serial.println(" ppm"); 
 }
 
 void setup() {
@@ -367,6 +364,7 @@ void setup() {
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_DI0);
 
   configForLoRaWAN();
+  init_MQTT();
 
   if (!LoRa.begin(LORA_BAND)){
     Serial.println("Falha de inicialização do Modulo LoRa. Verifique as conexões.");
@@ -397,37 +395,54 @@ void setup() {
 }
 
 void loop() {
-  if (millis() - lastSendTime > interval) {
+
+  if (millis() - lastSendTime > intervalo) {
     
     Serial.print("Destino = ");
-    Serial.println(destination);
+    Serial.println(destino);
     Serial.println(msgCount);
     
     if(msgCount>10){
-      message = sendTable();
-      sendMessage(message, 255);
+      mensagem = sendTable(); // envia tabela de servers
+      sendMessage(mensagem, 255);
       otherValues="";
+      mensagensRecebidas="";
       msgCount = 0;
+      
+
+      }
     }
     else{
-      message = Values;
+      mensagem = mensagensRecebidas;
       if (isServer==0){
         digitalWrite(LEDPIN, HIGH);
-        otherValues += Values;
-        Serial.print("Server otherVal"+otherValues);
+        otherValues += mensagensRecebidas;
+        //Serial.print("Mensagens Recebidas:"+otherValues);
+        otherValues = "";
       }
       else{
         digitalWrite(LEDPIN, LOW);
-        destination = myNeighbours[0];
-        sendMessage(message, destination);
-        printSensor();
+        if(isServer==1){//se for vizinho direto encaminho para o servidor
+          destino = meusServidores[0];
+          Serial.println("Destino: "+destino);
+          sendMessage(mensagem, destino);
+          
+        }
+        else{
+          destino = meusVizinhos[0];
+          Serial.println("Destino: "+destino);
+          sendMessage(mensagem, destino);
+          
+        }
+        //printSensor();
       }
     }
+    
     msgCount++;
     lastSendTime = millis();
-    interval = random(interval) + 20000;
+    intervalo = random(intervalo) + 20000;
     LoRa.receive();
-    makeData(String(lastSendTime));
+    makeData(lastSendTime);
   }
   
   int packetSize = LoRa.parsePacket();
