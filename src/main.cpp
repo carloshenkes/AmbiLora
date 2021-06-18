@@ -11,7 +11,6 @@ int gas = 0;
 #define PIN_SDA 4
 #define PIN_SCL 15
 
-
 #define SX1278_SCK  5    // GPIO5  -- SX1278's SCK
 #define SX1278_MISO 19   // GPIO19 -- SX1278's MISO
 #define SX1278_MOSI 27   // GPIO27 -- SX1278's MOSI
@@ -29,6 +28,7 @@ const char* password =  "henkes456";
 const char* broker_mqtt = "192.168.1.40";
 int broker_port = 1883;
 WiFiClient espClient;
+
 PubSubClient MQTT(espClient);
 
 #define LORA_BAND 915E6
@@ -62,27 +62,26 @@ String otherValues= "";
 byte isServer = 1;
 String nodeFunction[4] = {"SERVER","VIZINHO","VIZINHODO","ISOLADO"};
 
-byte const maxTableArrayVizinhos = 32; // quantidade de vizinhos pode ser aumentada conform memoria disponivel
-byte meusVizinhos[maxTableArrayVizinhos] = {}; // address of vizinhos directos
+byte const maxTableArrayVizinhos = 32; 
+byte meusVizinhos[maxTableArrayVizinhos] = {}; 
 
-byte const maxTableArrayServers = 4; // quantidade de servidores ao qual tenho acesso pode ser aumentada
-byte meusServidores[maxTableArrayServers]     = {}; // address dos servidores que encontrei
+byte const maxTableArrayServers = 4;
+byte meusServidores[maxTableArrayServers] = {}; 
 
-byte enderecoLocal = 110;     // Este sou eu!!!!! 
-byte destino = 0xFF;     // broadcast send
+byte enderecoLocal = 110;
+byte destino = 0xFF;
 
-int intervalo = 4000;       // intervaloo entre envios
-String mensagem = "Olá" ;//Eu sou o "+String(enderecoLocal);    // Envia esta mensagem
+int intervalo = 4000;
 
-byte msgCount     = 0;        // numero de mensagens enviadas
-long lastSendTime = 0;        // last send time
+String mensagem = "ola" ;
+
+byte msgCount     = 0;
+long lastSendTime = 0;
 
 const size_t CAPACITY = JSON_OBJECT_SIZE(1)+ JSON_ARRAY_SIZE(2)+20;
 StaticJsonDocument<CAPACITY> doc;
 //JsonArray array = doc.to<JsonArray>();
 String mensagensRecebidas;
-
-
 
 void configForLoRaWAN(){
   LoRa.setTxPower(TXPOWER);
@@ -94,16 +93,16 @@ void configForLoRaWAN(){
   LoRa.crc();
 }
 
-void configWifi(){
+void configWifi(int tentativas){
   WiFi.begin(ssid, password);
   int tentativas_wifi = 0;
-  while (tentativas_wifi < 5) {
+  while (tentativas_wifi < tentativas) {
     Serial.println("Conectando ao WiFi..");
     display.drawString(0, 10, "Conectando ao WiFi: ");
     display.drawString(0, 20,String(ssid));
     display.display();
     tentativas_wifi++;
-    Serial.println(tentativas_wifi);
+    Serial.print(" "+tentativas_wifi);
     delay(1000);
   }
   if(WiFi.status() == WL_CONNECTED){
@@ -146,7 +145,8 @@ void sendMessage(String mensagem, byte destino) {
   LoRa.print(mensagem);
   LoRa.endPacket();
   printScreen();
-  Serial.println("Enviar Mensagem " + String(msgCount) + " para Node: "+ String(destino));
+  Serial.print("Enviar Mensagem " + msgCount);
+  Serial.println(" para Node: "+ destino);
   delay(1000);
   msgCount++;
 }
@@ -281,12 +281,12 @@ void makeData(long value){
     doc["node"]=enderecoLocal;
     doc["sensor"]=gasReader();
     doc["uptime"]=value;
-    //Serial.println("Executou jsonmaker");
     serializeJson(doc, mensagensRecebidas);
+    Serial.println(" JSON ");
+    serializeJson(doc, Serial);
+    Serial.println(" ");
   }
-  Serial.println(" ");
-  serializeJson(doc, Serial); // imprimir no Serial
-  Serial.println(" ");
+  
 }
 
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
@@ -301,10 +301,10 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     Serial.println(msg_broker);        
 }
 
-void init_MQTT(){
+void init_MQTT(int tentativas){
   MQTT.setServer(broker_mqtt, broker_port);
-  while (!MQTT.connected())
-  {
+  int tentConn = 0;
+  while (tentConn<tentativas){
     Serial.println("Conectando ao broker MQTT...");
     if (MQTT.connect("ESP32Client")){
       Serial.println("Conectado ao broker!");
@@ -314,6 +314,7 @@ void init_MQTT(){
       Serial.print(MQTT.state());
       delay(2000);
     }
+    tentConn++;
   }
 }
 
@@ -356,15 +357,19 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
   Serial.println("MESHLORA");
-  display.drawString(0, 00, "CEH CO2 MeshLoRa V0.2");
+  display.drawString(0, 00, "CEH CO2 MeshLoRa V0.3");
   display.display();
   
-  configWifi();
+  //configWifi(4);
+
+  if(isServer==0){
+    init_MQTT(5);
+  }
 
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_DI0);
 
   configForLoRaWAN();
-  init_MQTT();
+  
 
   if (!LoRa.begin(LORA_BAND)){
     Serial.println("Falha de inicialização do Modulo LoRa. Verifique as conexões.");
@@ -385,56 +390,68 @@ void setup() {
   display.clear();
   display.display();
 
-  // MAC do LoRa
   chipid=ESP.getEfuseMac();
   //Serial.printf("ESP32 Chip ID = %04X",(uint16_t)(chipid>>32));//print High 2 bytes
   //Serial.printf("%08X\n",(uint32_t)chipid);//print Low 4bytes.
   MAC = String((uint16_t)(chipid>>32), HEX); 
   MAC += String((uint32_t)chipid, HEX);
   Serial.println(MAC);
+  char saidaMQTT[15];
+  MQTT.publish("loramesh",saidaMQTT);
+  MAC.toCharArray(saidaMQTT,15);
+  MQTT.publish("loramesh",saidaMQTT);
+  
 }
 
 void loop() {
 
   if (millis() - lastSendTime > intervalo) {
     
-    Serial.print("Destino = ");
-    Serial.println(destino);
-    Serial.println(msgCount);
+    
     
     if(msgCount>10){
       mensagem = sendTable(); // envia tabela de servers
       sendMessage(mensagem, 255);
+      if (isServer==0){
+        char saidaMQTT[400];
+        mensagensRecebidas.toCharArray(saidaMQTT,400);
+        MQTT.publish("loramesh",saidaMQTT);
+      }
       otherValues="";
       mensagensRecebidas="";
       msgCount = 0;
-      
-
-      }
+    
     }
     else{
+      
       mensagem = mensagensRecebidas;
+
       if (isServer==0){
+        Serial.print("Dest "+destino);
+        Serial.println("Env"+msgCount);
+        sendMessage("ola", 255);
         digitalWrite(LEDPIN, HIGH);
         otherValues += mensagensRecebidas;
-        //Serial.print("Mensagens Recebidas:"+otherValues);
         otherValues = "";
       }
       else{
         digitalWrite(LEDPIN, LOW);
         if(isServer==1){//se for vizinho direto encaminho para o servidor
-          destino = meusServidores[0];
-          Serial.println("Destino: "+destino);
-          sendMessage(mensagem, destino);
-          
+          if(mensagem != "ola"){
+            destino = meusServidores[0];
+            Serial.println("Destino: "+destino);
+            sendMessage(mensagem, destino);
+          }
         }
         else{
-          destino = meusVizinhos[0];
-          Serial.println("Destino: "+destino);
-          sendMessage(mensagem, destino);
-          
+          if(mensagem != "ola"){
+            destino = meusVizinhos[0];
+            sendMessage(mensagem, destino);
+            Serial.println("Destino: "+destino);
+          }
         }
         //printSensor();
+        makeData(lastSendTime);
       }
     }
     
@@ -442,7 +459,7 @@ void loop() {
     lastSendTime = millis();
     intervalo = random(intervalo) + 20000;
     LoRa.receive();
-    makeData(lastSendTime);
+    
   }
   
   int packetSize = LoRa.parsePacket();
