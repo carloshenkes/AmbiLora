@@ -331,8 +331,8 @@ void setup() {
   display.clear();
   Serial.begin(115200);
   while (!Serial);
-  Serial.println("MESHLORA");
-  display.drawString(0, 00, "CEH CO2 MeshLoRa V0.3");
+  Serial.println("AmbiLora V0.4");
+  display.drawString(0, 00, "AmbiLora V0.4");
   display.display();
 
   //configWifi(4);
@@ -354,7 +354,7 @@ void setup() {
   display.clear();
   display.display();
   display.drawString(0, 10, "MOD LoRa Iniciado com Sucesso");
-  display.drawString(0, 20, "LoRa Mesh iniciado...");
+  display.drawString(0, 20, "AmbiLora iniciado...");
   display.display();
   delay(1500);
   display.clear();
