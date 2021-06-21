@@ -47,7 +47,7 @@ SSD1306 display(OLED_ADDR, OLED_SDA, OLED_SCL);
 #define LEDPIN 25
 uint64_t chipid;
 
-// Este node e servidor
+
 // 0 = Servidor internet
 // 1 = Vizinho de servidor internet
 // 2 = Vizinho com um Vizinho de um servidor internet 
@@ -335,7 +335,7 @@ void setup() {
   display.drawString(0, 00, "AmbiLora V0.4");
   display.display();
 
-  //configWifi(4);
+  //configWifi(4); // ao comentar não é iniciado
 
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_DI0);
 
