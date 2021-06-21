@@ -25,10 +25,7 @@ int gas = 0;
 
 const char* ssid = "Henkes";
 const char* password =  "henkes456";
-const char* broker_mqtt = "192.168.1.40";
-int broker_port = 1883;
 WiFiClient espClient;
-
 PubSubClient MQTT(espClient);
 
 #define LORA_BAND 915E6
@@ -46,14 +43,9 @@ PubSubClient MQTT(espClient);
 #define SYNC_WORD 0x34
 SSD1306 display(OLED_ADDR, OLED_SDA, OLED_SCL);
 
-int tempRead;
-int humRead;
 
-#define LEDPIN 2
+#define LEDPIN 25
 uint64_t chipid;
-String MAC;
-
-String otherValues= "";
 
 // Este node e servidor
 // 0 = Servidor internet
@@ -78,10 +70,8 @@ String mensagem = "ola" ;
 byte msgCount     = 0;
 long lastSendTime = 0;
 
-const size_t CAPACITY = JSON_OBJECT_SIZE(1)+ JSON_ARRAY_SIZE(2)+20;
-StaticJsonDocument<CAPACITY> doc;
-//JsonArray array = doc.to<JsonArray>();
 String mensagensRecebidas;
+String mensagensEnviar;
 
 void configForLoRaWAN(){
   LoRa.setTxPower(TXPOWER);
@@ -99,26 +89,45 @@ void configWifi(int tentativas){
   while (tentativas_wifi < tentativas) {
     Serial.println("Conectando ao WiFi..");
     display.drawString(0, 10, "Conectando ao WiFi: ");
-    display.drawString(0, 20,String(ssid));
+    display.drawString(0, 20,ssid);
     display.display();
     tentativas_wifi++;
-    Serial.print(" "+tentativas_wifi);
+    if(WiFi.status() == WL_CONNECTED){
+      display.clear();
+      display.display();
+      display.drawString(0, 30, "Conectado ao WiFi "+String(ssid));
+      display.display();
+      isServer = 0; // Sou o Server!!
+      return;
+    }
     delay(1000);
   }
-  if(WiFi.status() == WL_CONNECTED){
-    display.clear();
-    display.display();
-    Serial.println("Conectado ao WiFi "+String(ssid));
-    display.drawString(0, 30, "Conectado ao WiFi "+String(ssid));
-    display.display();
-    isServer = 0; // Sou o Server!!
-  }
-  else{
+  if(WiFi.status() != WL_CONNECTED){
     display.clear();
     display.display();
     Serial.println("Não Encontrou nehuma rede");
     display.drawString(0, 30, "Não conectado ao WiFi");
     display.display();
+  }
+}
+
+void init_MQTT(int tentativas,String msgEnvia){
+  MQTT.setServer("192.168.1.40", 1883);
+  int tentConn = 0;
+  while (tentConn<tentativas){
+    if (MQTT.connect("ESP32Client")){
+      char saidaMQTT[255];
+      msgEnvia.toCharArray(saidaMQTT,255);
+      MQTT.publish("loramesh",saidaMQTT);
+      return;
+    }
+    else{
+      Serial.print("Falha na conexao ao broker - Estado: ");
+      Serial.print(MQTT.state());
+      delay(2000);
+    }
+    delay(1000);
+    tentConn++;
   }
 }
 
@@ -145,8 +154,7 @@ void sendMessage(String mensagem, byte destino) {
   LoRa.print(mensagem);
   LoRa.endPacket();
   printScreen();
-  Serial.print("Enviar Mensagem " + msgCount);
-  Serial.println(" para Node: "+ destino);
+  Serial.println("Para Node:"+ destino);
   delay(1000);
   msgCount++;
 }
@@ -172,13 +180,15 @@ void arrayAddElement(byte array[], byte element, byte max) {
 void printVizinhos(){
   Serial.print("Vizinhos: {");
   for (int i = 0; i < sizeof(meusVizinhos); i++) { 
-    Serial.print(String(meusVizinhos[i]));  Serial.print(" ");
+    Serial.print(meusVizinhos[i]);  
+    Serial.print(" ");
   }  
   Serial.println("}"); 
 
   Serial.print("Servidores: {");
   for (int i = 0; i < sizeof(meusServidores); i++) { 
-    Serial.print(String(meusServidores[i]));     Serial.print(" ");
+    Serial.print(meusServidores[i]);     
+    Serial.print(" ");
   }
   Serial.println("}"); 
 }
@@ -199,11 +209,14 @@ void onReceive(int packetSize) {
 
   // Caso a Mensagem não for para mim ou para todos
   if (recipient != enderecoLocal && recipient != 0xFF) {
-    Serial.println("Esta mensagem não é para mim."+ recipient);
     incoming = "mensagem n e para mim";
     mensagem= incoming;
     printScreen();
     delay(150);
+    return;
+  }
+
+  if(incoming.isEmpty()){
     return;
   }
 
@@ -235,41 +248,47 @@ void onReceive(int packetSize) {
   Serial.println("Mensagem ID: " + String(incomingMsgId));
   Serial.println("Mensagem length: " + String(incomingLength));
   Serial.println("Conteudo: " + incoming);
-  
-  otherValues += incoming;
-  mensagensRecebidas += incoming;
   Serial.println("RSSI: " + String(LoRa.packetRssi()));
   Serial.println("Snr: " + String(LoRa.packetSnr()));
   Serial.println();
-  delay(1000);
+  delay(200);
 
   // Posicionamento dos nós na rede
   switch (incomingMsgHand) {
-    case 0: // Caso Handshake for 0
+    case 0:
       if(!arrayIncludeElement(meusServidores,sender,maxTableArrayServers)){
-        Serial.println("Encontrei um SERVIDOR! "+sender);
+        Serial.println("SERVIDOR"+sender);
         arrayAddElement(meusServidores,sender,maxTableArrayServers);
-        display.drawString(0, 32, "NOVO: " + String(sender)); 
+        display.drawString(0, 32, "NOVO: " + sender); 
       }
       destino = sender;
       break;
-    case 1:// Caso Handshake for 1
+    case 1:
       if(!arrayIncludeElement(meusVizinhos,sender,maxTableArrayVizinhos)){
-        Serial.println("Encontrei nó VIZINHO do Server! "+sender);
+        Serial.println("VIZINHO"+sender);
         arrayAddElement(meusVizinhos,sender,maxTableArrayVizinhos);
-        display.drawString(0, 32, "NOVO: " + String(sender));
+        display.drawString(0, 32, "NOVO: " + sender);
       }
       if(isServer!=0){
         destino = sender;
       }
       break;
-    case 2: // Caso Handshake for 2
-      Serial.println("Encontrei nó VIZINHO DO VIZINHO do Server!");
+    case 2:
+      Serial.println("VIZINHODO");
       break;      
     default:
       break;
   }
 
+  if(incoming=="ola" || '[' == incoming.charAt(0)){
+    return;
+  }
+  if(isServer==0){
+    mensagensEnviar += incoming;
+  }else{
+    mensagensEnviar += incoming+"|";
+  }
+  Serial.println("Mensagens: "+mensagensEnviar);
 }
 
 int gasReader(){
@@ -278,62 +297,23 @@ int gasReader(){
 
 void makeData(long value){
   if(isServer!=0){
-    doc["node"]=enderecoLocal;
-    doc["sensor"]=gasReader();
-    doc["uptime"]=value;
-    serializeJson(doc, mensagensRecebidas);
-    Serial.println(" JSON ");
-    serializeJson(doc, Serial);
-    Serial.println(" ");
-  }
-  
-}
-
-void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-    String msg_broker;
-    char c;
-    /* Obtem a string do payload (dados) recebido */
-    for(int i = 0; i < length; i++) {
-       c = (char)payload[i];
-       msg_broker += c;
-    }
-    Serial.print("[MQTT] Dados recebidos do broker: ");        
-    Serial.println(msg_broker);        
-}
-
-void init_MQTT(int tentativas){
-  MQTT.setServer(broker_mqtt, broker_port);
-  int tentConn = 0;
-  while (tentConn<tentativas){
-    Serial.println("Conectando ao broker MQTT...");
-    if (MQTT.connect("ESP32Client")){
-      Serial.println("Conectado ao broker!");
-    }
-    else{
-      Serial.print("Falha na conexao ao broker - Estado: ");
-      Serial.print(MQTT.state());
-      delay(2000);
-    }
-    tentConn++;
+    String json;
+    json="{\"n\":"+String(enderecoLocal)+",\"s\":"+String(gasReader())+",\"u\":"+String(value)+"}|";
+    mensagensEnviar +=json;
+    Serial.println(mensagensEnviar);
   }
 }
 
 String sendTable(){
   const size_t CAPACITY = JSON_ARRAY_SIZE(4);
-      StaticJsonDocument<CAPACITY> doc;
-      JsonArray array = doc.to<JsonArray>();
-        for (int i = 0; i < sizeof(meusServidores); i++) { 
-            array.add(meusServidores[i]);
-       }
-      String Values;
-      serializeJson(doc, Values);
-      return Values;
-}
-
-void printSensor(){
-  Serial.print("MQ135 = ");
-  Serial.print(gasReader());
-  Serial.println(" ppm"); 
+  StaticJsonDocument<CAPACITY> doc;
+  JsonArray array = doc.to<JsonArray>();
+  for (int i = 0; i < sizeof(meusServidores); i++) { 
+    array.add(meusServidores[i]);
+  }
+  String Values;
+  serializeJson(doc, Values);
+  return Values;
 }
 
 void setup() {
@@ -342,29 +322,20 @@ void setup() {
   delay(50);
   digitalWrite(OLED_RST, HIGH); 
   delay(1000);
-
-  //configura pino analog. do sensor como entrada
   pinMode(MQ_analog, INPUT);
-
   pinMode(LEDPIN,OUTPUT);
-
   display.init();
   display.flipScreenVertically();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   display.setFont(ArialMT_Plain_10);
   display.clear();
-
   Serial.begin(115200);
   while (!Serial);
   Serial.println("MESHLORA");
   display.drawString(0, 00, "CEH CO2 MeshLoRa V0.3");
   display.display();
-  
-  //configWifi(4);
 
-  if(isServer==0){
-    init_MQTT(5);
-  }
+  //configWifi(4);
 
   LoRa.setPins(SX1278_CS, SX1278_RST, SX1278_DI0);
 
@@ -382,7 +353,6 @@ void setup() {
   LoRa.receive();
   display.clear();
   display.display();
-  Serial.println("MOD LoRa Iniciado com Sucesso");
   display.drawString(0, 10, "MOD LoRa Iniciado com Sucesso");
   display.drawString(0, 20, "LoRa Mesh iniciado...");
   display.display();
@@ -390,82 +360,61 @@ void setup() {
   display.clear();
   display.display();
 
+  sendMessage(mensagem, 255);
+
   chipid=ESP.getEfuseMac();
-  //Serial.printf("ESP32 Chip ID = %04X",(uint16_t)(chipid>>32));//print High 2 bytes
-  //Serial.printf("%08X\n",(uint32_t)chipid);//print Low 4bytes.
-  MAC = String((uint16_t)(chipid>>32), HEX); 
+  String MAC = String((uint16_t)(chipid>>32), HEX); 
   MAC += String((uint32_t)chipid, HEX);
   Serial.println(MAC);
-  char saidaMQTT[15];
-  MQTT.publish("loramesh",saidaMQTT);
-  MAC.toCharArray(saidaMQTT,15);
-  MQTT.publish("loramesh",saidaMQTT);
+  if(isServer==0){
+    init_MQTT(2,mensagem);
+  }
   
 }
 
 void loop() {
-
   if (millis() - lastSendTime > intervalo) {
-    
-    
-    
-    if(msgCount>10){
+    if(msgCount>6){
+      Serial.println("MENSAGENS: "+mensagensEnviar);
+      if (isServer==0){
+        init_MQTT(3,mensagensEnviar);
+      }
       mensagem = sendTable(); // envia tabela de servers
       sendMessage(mensagem, 255);
-      if (isServer==0){
-        char saidaMQTT[400];
-        mensagensRecebidas.toCharArray(saidaMQTT,400);
-        MQTT.publish("loramesh",saidaMQTT);
-      }
-      otherValues="";
       mensagensRecebidas="";
+      mensagensEnviar="";
       msgCount = 0;
-    
     }
     else{
-      
       mensagem = mensagensRecebidas;
-
       if (isServer==0){
         Serial.print("Dest "+destino);
         Serial.println("Env"+msgCount);
         sendMessage("ola", 255);
         digitalWrite(LEDPIN, HIGH);
-        otherValues += mensagensRecebidas;
-        otherValues = "";
       }
       else{
         digitalWrite(LEDPIN, LOW);
         if(isServer==1){//se for vizinho direto encaminho para o servidor
-          if(mensagem != "ola"){
             destino = meusServidores[0];
             Serial.println("Destino: "+destino);
-            sendMessage(mensagem, destino);
-          }
+            sendMessage(mensagensEnviar, destino);
         }
         else{
-          if(mensagem != "ola"){
             destino = meusVizinhos[0];
-            sendMessage(mensagem, destino);
+            sendMessage(mensagensEnviar, destino);
             Serial.println("Destino: "+destino);
-          }
         }
-        //printSensor();
         makeData(lastSendTime);
       }
     }
-    
     msgCount++;
     lastSendTime = millis();
     intervalo = random(intervalo) + 20000;
     LoRa.receive();
-    
   }
-  
   int packetSize = LoRa.parsePacket();
-  
   if (packetSize){
     onReceive(packetSize);
   }
-
 }
