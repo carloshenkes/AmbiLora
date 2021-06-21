@@ -34,7 +34,6 @@ PubSubClient MQTT(espClient);
 //915E6 North America
 
 #define PABOOST true
-
 #define TXPOWER 14
 #define SPREADING_FACTOR 12
 #define BANDWIDTH 125000
@@ -43,10 +42,8 @@ PubSubClient MQTT(espClient);
 #define SYNC_WORD 0x34
 SSD1306 display(OLED_ADDR, OLED_SDA, OLED_SCL);
 
-
 #define LEDPIN 25
 uint64_t chipid;
-
 
 // 0 = Servidor internet
 // 1 = Vizinho de servidor internet
@@ -97,7 +94,7 @@ void configWifi(int tentativas){
       display.display();
       display.drawString(0, 30, "Conectado ao WiFi "+String(ssid));
       display.display();
-      isServer = 0; // Sou o Server!!
+      isServer = 0;
       return;
     }
     delay(1000);
@@ -207,7 +204,6 @@ void onReceive(int packetSize) {
     incoming += (char)LoRa.read();
   }
 
-  // Caso a Mensagem não for para mim ou para todos
   if (recipient != enderecoLocal && recipient != 0xFF) {
     incoming = "mensagem n e para mim";
     mensagem= incoming;
@@ -226,9 +222,8 @@ void onReceive(int packetSize) {
 
   display.setColor(WHITE);
   display.drawLine(0,31,127,31);
-  display.drawString(0, 32, "Rx: " + incoming); // Mensagem recebida
+  display.drawString(0, 32, "Rx: " + incoming); 
 
-  //Novo vizinho
   if(!arrayIncludeElement(meusVizinhos,sender,maxTableArrayVizinhos)){
     arrayAddElement(meusVizinhos,sender,maxTableArrayVizinhos);
     //display.drawString(0, 32, "NOVO: " + String(sender));
@@ -369,7 +364,6 @@ void setup() {
   if(isServer==0){
     init_MQTT(2,mensagem);
   }
-  
 }
 
 void loop() {
@@ -395,7 +389,7 @@ void loop() {
       }
       else{
         digitalWrite(LEDPIN, LOW);
-        if(isServer==1){//se for vizinho direto encaminho para o servidor
+        if(isServer==1){
             destino = meusServidores[0];
             Serial.println("Destino: "+destino);
             sendMessage(mensagensEnviar, destino);
